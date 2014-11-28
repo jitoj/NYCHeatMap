@@ -1,0 +1,351 @@
+<head>
+	<link href='http://fonts.googleapis.com/css?family=Unica+One' rel='stylesheet' type='text/css'>
+	<style>
+    html, body, #map-canvas {
+	   	    height: 100%;
+	   	    margin: 0px;
+	   		padding: 0px;
+			font-family: 'Unica One', sans-serif;
+			z-index:1;
+    	}
+  
+		#draggable {
+			z-index:100; 
+			background-color: rgba(105,105,105,.7); 
+			width: 250px;
+			padding: 16px;
+			position:absolute;
+			top:30px;
+			right:5px;
+			cursor: move;
+			border: black 0px solid;
+		}
+
+		#radius-label, #opacity-label, #range-label,#pd_radio,#la_radio,#set-filter,#all-counts,#low-counts {
+			margin-top: 10px;
+		}
+
+
+		#radius-slider .ui-slider-handle, 
+		#opacity-slider .ui-slider-handle,
+		#range-slider .ui-slider-handle{cursor:pointer;}
+
+
+  </style>
+	
+	<script src="/src/papaparse.min.js"></script>
+	<script src="https://maps.googleapis.com/maps/api/js?v=3.exp&libraries=visualization"></script>
+	<script src="/src/jquery-2.1.1.min.js"></script>
+	<script src="/src/jquery-ui.min.js"></script>
+	<link rel="stylesheet" href="src/jquery-ui.css">
+
+	<script>
+		var map,parseddata, pointarray, heatmap,norm_max,mincount,maxcount,usertype,firstmaxp,firstmaxd;
+		var low_max=600;
+		var csv = [];
+
+		function numberAddCommas(x) {
+				return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+				console.log(x)
+		}
+
+		function FileSelectHandler(evt) {
+				var file = evt.target.files[0];
+				console.time("FileParse");
+			    Papa.parse(file, {
+				header: true,
+				dynamicTyping: true,
+				complete: function(results) {
+                console.log("File parsed!", results.data.length);
+                parseddata=results
+                firstmax=null;
+                addData(results,50,low_max,$('input[name=pd_radio]:checked').val());
+                $("#low-counts").button("enable");
+				console.timeEnd("FileParse");	
+               }
+			});
+		}
+
+		function addData(results,user_min,user_max,user_type){
+				csv = [];
+				var row;
+				console.log(results)
+				//console.log(Object.keys(results["data"]["count"]).map(function ( key ) { return results["data"]["count"]; }))
+				console.log("Add Data for",user_min,user_max,user_type)
+				var max = results["data"][0]["count"];
+				for(idx in results["data"]) { 
+					row = results["data"][idx];
+					if(row["type"]==user_type && row["count"]>=user_min && row["count"]<=user_max ){
+						max = Math.max(max, row["count"]);	
+						csv.push({
+							location: new google.maps.LatLng(row["lat"], row["long"]),
+							weight: Math.sqrt(row["count"])
+							});
+					}
+				}		
+				norm_max=Math.sqrt(max);
+				if(firstmaxp==null){firstmaxp=max}
+				if(firstmaxd==null){firstmaxd=max}
+				console.log("Max:",max);
+				console.log("Normalized Max:",norm_max);		
+				loadHeatmap(csv,user_type);
+	
+				//$("#range-label").html("MIN: " + $("#range-slider").slider("values",50)+" MAX:"+$("#range-slider").slider("values",max));
+				if (user_max ==null){user_max=max}
+				//if (user_min ==null){user_min=50}
+				$("#range-label").html("MIN: " + $("#range-slider").slider("values",0)+" MAX:"+max);
+				$("#range-slider").slider("option","max",max);
+				$("#range-slider").slider("values",[$("#range-slider").slider("values",0),max]);
+
+				}
+
+		function initialize() {
+				 var NYC = new google.maps.LatLng(40.75,-73.9);
+				 var NYC_MAPTYPE_ID = 'custom_style';
+				 var featureOpts = [
+		          {
+			            stylers: [
+			              { hue: '#890000' },
+			              { visibility: 'simplified' },
+			              { gamma: 0.5 },
+			              { weight: 0.5 }
+			            ]
+			          },
+			          {
+			            elementType: 'labels',
+			            stylers: [
+			              { visibility: 'simplified' }//simplified
+			            ]
+			          },
+			          {
+			            featureType: 'water',
+			            stylers: [
+			              { color: '#f0f0f0' }
+			            ]
+			          },
+
+			         {
+			           featureType: "road",
+			           stylers: [
+			            { visibility: "simplified" }//simplified
+			          ]
+			         },
+			          {
+			           featureType: "road",
+			           elementType: "labels.icon",
+			           stylers: [
+			            { visibility: "off" }
+			          ]
+			         },
+			          {
+			           featureType: "poi",
+			           stylers: [
+			            { visibility: "off" }
+			          ]
+			         },
+			          {
+			          featureType: "transit",
+			          stylers: [
+			            { visibility: "simplified" }
+			          ]
+			         }
+				 ];
+		         var mapOptions = {
+			          zoom: 12,
+			          center: NYC,
+			          mapTypeControlOptions: {
+			            mapTypeIds: [google.maps.MapTypeId.ROADMAP,google.maps.MapTypeId.SATELLITE, NYC_MAPTYPE_ID]
+			          },
+			          mapTypeId: NYC_MAPTYPE_ID
+		         };
+
+				 map = new google.maps.Map(document.getElementById('map-canvas'),mapOptions);
+				 var styledMapOptions = {name: 'Custom Style'};
+		      	 var customMapType = new google.maps.StyledMapType(featureOpts, styledMapOptions);
+		      	 map.mapTypes.set(NYC_MAPTYPE_ID, customMapType);
+
+				 }
+
+		function filtercounts(mincount,maxcount,usertype){
+			mincount=$("#range-slider").slider("values",0);
+			maxcount=$("#range-slider").slider("values",1);
+			usertype=$('input[name=radio]:checked').val();
+			console.log("Filtering Counts",mincount,maxcount,usertype);
+			addData(parseddata,mincount,maxcount,usertype);
+		}
+		function loadHeatmap(csv,usertype) {
+			console.time("PlotHeatMap");
+			console.log("Type*",usertype)
+			if (usertype=="d")
+			{
+			var gradient= [
+						    'rgba(8,48,107,0.1)',
+						    'rgba(8,48,107,0.3)',
+						    'rgba(8,48,107,0.5)',
+						    'rgba(8,48,107,0.7)',
+						    'rgba(8,48,107,0.9)',
+						    'rgba(8,48,107,1)'
+			   			];
+
+			}
+			else
+			{
+			var gradient = [
+						    'rgba(254, 230, 206,1)',
+						    'rgba(253, 208, 1620,1)',
+						    'rgba(241, 105, 19,1)',
+						    'rgba(217, 72, 1,1)',
+						    'rgba(166, 54, 3,1)',
+						    'rgba(127, 39, 4,1)'
+			   			];
+
+			/*var gradient = [
+						    'rgba(255, 0, 0,0.1)',
+						    'rgba(255, 0, 0,0.3)',
+						    'rgba(255, 0, 0,0.5)',
+						    'rgba(255, 0, 0,0.7)',
+						    'rgba(255, 0, 0,0.9)',
+						    'rgba(255, 0, 0,1)'
+			   			];*/
+
+			}
+			var pointArray = new google.maps.MVCArray(csv);
+
+			if(heatmap) heatmap.setMap(null);
+			
+			heatmap = new google.maps.visualization.HeatmapLayer({
+				data: pointArray,
+				radius: $("#radius-slider").slider("value"),
+				opacity: $("#opacity-slider").slider("value")
+			});
+			
+			heatmap.setMap(map);
+			//heatmap.set('radius', 7);
+			heatmap.set('opacity', .45);
+			heatmap.set('maxIntensity',norm_max/2);
+			//heatmap.set('gradient', heatmap.get('gradient') ? null : gradient);
+			console.timeEnd("PlotHeatMap");
+		}
+
+		
+		$(document).ready(function(){
+			$("#csv-file").change(FileSelectHandler);
+			
+			google.maps.event.addDomListener(window, 'load', initialize);
+			
+			$(function() {
+				$( "#draggable" ).draggable();
+			});
+			
+			$(function() {
+				$( "#radius-slider" ).slider({
+					orientation: "horizontal",
+					range: "min",
+					min: 1,
+					max: 14,
+					value: 7,
+					slide: function(event, ui) {
+						$("#radius-label").html("RADIUS: " + ui.value);
+						if(heatmap == null) return;
+						heatmap.set('radius', ui.value);
+					}
+				});
+
+				$( "#opacity-slider" ).slider({
+					orientation: "horizontal",
+					range: "min",
+					min: 0,
+					max: 100,
+					value: 45,
+					slide: function(event, ui) {
+						$("#opacity-label").html("OPACITY: " + ui.value);
+						if(heatmap == null) return;
+						heatmap.set('opacity', ui.value/100);
+					}
+				});
+
+				$( "#range-slider" ).slider({
+					orientation: "horizontal",
+					range: true,
+					min: 50,				
+					value: [5000,10000],
+					slide: function(event, ui) {
+						$("#range-label").html("MIN: " + $("#range-slider").slider("values",0)+" MAX:"+$("#range-slider").slider("values",1));
+						if(heatmap == null) return;
+						//heatmap.set('maxIntensity', Math.sqrt(ui.value))
+					},
+					stop: function(event, ui) {
+						//filtercounts();
+					}
+				});
+
+				$( "#pickup" )
+				     .button()
+				     .click(function( event ) {
+						addData(parseddata,$("#range-slider").slider("values",0),$('input[name=la_radio]:checked').val(),$('input[name=pd_radio]:checked').val())
+				     });
+
+				$( "#dropoff" )
+				     .button()
+				     .click(function( event ) {
+						addData(parseddata,$("#range-slider").slider("values",0),$('input[name=la_radio]:checked').val(),$('input[name=pd_radio]:checked').val())
+				     });
+
+				$( "#all-counts" )
+				     .button()
+				     .click(function( event ) {
+						addData(parseddata,50,1000000,$('input[name=pd_radio]:checked').val())
+				     });
+
+				$( "#low-counts" )
+				     .button()
+				     .click(function( event ) {
+						addData(parseddata,50,low_max,$('input[name=pd_radio]:checked').val())
+				     });
+
+				$( "#set-filter" )
+				     .button()
+				     .click(function( event ) {
+				       addData(parseddata,$("#range-slider").slider("values",0),$("#range-slider").slider("values",1),$('input[name=pd_radio]:checked').val());
+				     });
+
+				$( "#pd_radio" ).buttonset();
+				$( "#la_radio" ).buttonset();
+
+			});
+		});
+	</script>
+</head>
+<body>
+
+	<div id="map-canvas"> </div>
+
+	<div id="draggable">
+
+		<input type="file" id="csv-file" name="files"/>
+
+
+		<div id="radius-label">RADIUS: 7</div>
+		<div id="radius-slider"></div>
+
+		<div id="opacity-label">OPACITY: 50</div>
+		<div id="opacity-slider"></div>
+
+		<div id="pd_radio">
+		    <input type="radio" id="pickup" name="pd_radio" value="p" checked=true><label for="pickup">Pickups</label>
+		    <input type="radio" id="dropoff" name="pd_radio" value="d" ><label for="dropoff">Dropoffs</label>
+		</div>
+		<div id="la_radio">		
+		    <input type="radio" id="low-counts" name="la_radio" value="600" checked=true><label for="low-counts">Low Counts</label>
+		    <input type="radio" id="all-counts" name="la_radio" value="1000000" ><label for="all-counts">All Counts</label>
+		</div>
+		<div id="set-filter">Filter by Range</div>
+		<div id="range-label">MIN: -  MAX:-</div>
+		<div id="range-slider"></div>
+
+	</div>
+    <title>NYC Taxi GHeatmap</title>
+
+</body>
+
+
